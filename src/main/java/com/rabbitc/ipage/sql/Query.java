@@ -128,7 +128,15 @@ public final class Query {
             String expr = aggregateExpressionOf(field);
             selectedFields.add(SelectedField.aggregate(field.name(), expr, field.name(), field.function()));
         }
+        // 分组必须覆盖所有非聚合选择列：既包括本表的列，也包括关联表 JOIN 进来后被选出的列。
+        // 只按主键分组会让 SELECT 里的「关联表列」成为非法引用（PostgreSQL 会直接报错）。
+        // 主表主键在前，保证分组顺序稳定；主键相同的行在各关联表上取值唯一，所以不会多出行。
         groupBy.add(aliased(baseAlias, meta.idColumn()));
+        for (SelectedField selected : selectedFields) {
+            if (selected.kind() != SelectedField.Kind.AGGREGATE) {
+                groupBy.add(selected.columnExpression());
+            }
+        }
     }
 
     /**
@@ -280,7 +288,11 @@ public final class Query {
                 throw new ModelDefinitionException(
                         "聚合字段 " + meta.modelClass().getSimpleName() + "." + field.name()
                         + " 需要先关联 " + relation.modelClass().getSimpleName()
-                        + "，但它没有出现在任何关联字段上");
+                        + "，但它没有出现在任何关联字段上。"
+                        + "两种改法：在本模型上补一个类型为 ASSOCIATION_MODEL、byModel = "
+                        + relation.modelClass().getSimpleName() + " 的字段；"
+                        + "或者置 useRelatedForeignKey = true，改由 "
+                        + relation.modelClass().getSimpleName() + " 指向本表的外键来统计");
             }
         }
 
@@ -618,6 +630,14 @@ public final class Query {
      * 把名字转换成合法的 SQL 别名。
      */
     private static final class Aliases {
+        /**
+         * 别名统一前缀。表名本身可能就是 SQL 保留字（{@code user}、{@code order}、{@code group}
+         * 之类），若直接拿表名当别名，PostgreSQL 会把 {@code user."user_id"} 里的 {@code user}
+         * 当成 {@code CURRENT_USER} 解析，导致「语法错误 在 "." 或附近」。
+         * 加前缀后别名不可能与保留字相同，也不需要为每个方言维护关键字表。
+         */
+        private static final String PREFIX = "t_";
+
         private Aliases() {
         }
 
@@ -626,7 +646,7 @@ public final class Query {
             if (sanitized.isBlank()) {
                 throw new ModelDefinitionException("无法从表名「" + table + "」推导出 SQL 别名");
             }
-            return Character.toLowerCase(sanitized.charAt(0)) + sanitized.substring(1);
+            return PREFIX + Character.toLowerCase(sanitized.charAt(0)) + sanitized.substring(1);
         }
     }
 }

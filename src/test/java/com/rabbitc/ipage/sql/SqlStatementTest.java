@@ -59,9 +59,9 @@ class SqlStatementTest {
     @DisplayName("关联字段生成 LEFT JOIN，别名是合法的标识符")
     void joinsAssociation() {
         SqlStatement statement = SqlStatement.select(Query.of(Student.class), true);
-        assertTrue(statement.sql().contains("FROM student student"), statement.sql());
+        assertTrue(statement.sql().contains("FROM student t_student"), statement.sql());
         assertTrue(statement.sql().contains("LEFT JOIN school_class"), statement.sql());
-        assertTrue(statement.sql().contains("= school_class.class_id"), statement.sql());
+        assertTrue(statement.sql().contains("= t_school_class.class_id"), statement.sql());
         assertFalse(statement.sql().contains("-"), "别名不应出现连字符");
     }
 
@@ -103,7 +103,7 @@ class SqlStatementTest {
                 .page(3, 20);
         SqlStatement statement = SqlStatement.select(query, true);
         assertTrue(statement.sql().endsWith("LIMIT ? OFFSET ?"), statement.sql());
-        assertTrue(statement.sql().contains("ORDER BY student.student_id DESC"), statement.sql());
+        assertTrue(statement.sql().contains("ORDER BY t_student.student_id DESC"), statement.sql());
         assertEquals(40, ((Number) statement.parameters().get(statement.parameters().size() - 1)).intValue());
         assertEquals(20, ((Number) statement.parameters().get(statement.parameters().size() - 2)).intValue());
     }
@@ -115,8 +115,8 @@ class SqlStatementTest {
                 .where("classCount", OperatorType.GT, 3);
         SqlStatement statement = SqlStatement.select(query, true);
         assertTrue(query.hasAggregates());
-        assertTrue(statement.sql().contains("GROUP BY school_class.class_id"), statement.sql());
-        assertTrue(statement.sql().contains("COUNT(DISTINCT student.class_id)"), statement.sql());
+        assertTrue(statement.sql().contains("GROUP BY t_school_class.class_id"), statement.sql());
+        assertTrue(statement.sql().contains("COUNT(DISTINCT t_student.class_id)"), statement.sql());
         assertTrue(statement.sql().contains("HAVING"), statement.sql());
     }
 
@@ -163,5 +163,43 @@ class SqlStatementTest {
         @ModelField(column = "class_id", type = FieldType.AGGREGATION, byModel = Student.class,
                 function = SqlFunction.COUNT, text = "人数")
         Integer classCount;
+    }
+
+    /**
+     * 表名与 SQL 保留字同名，用来验证别名不会退化成保留字。
+     */
+    @ModelClass(name = "登录用户", table = "user")
+    public static class User {
+
+        @ModelField(column = "user_id", type = FieldType.MODEL_ID, fixed = true)
+        Integer userId;
+
+        @ModelField(column = "user_name", type = FieldType.STRING, text = "用户名")
+        String userName;
+    }
+
+    @Test
+    @DisplayName("表名撞上 SQL 保留字时，别名也不能是保留字")
+    void avoidsReservedWordAlias() {
+        Query query = Query.of(ModelMeta.of(User.class), com.rabbitc.ipage.dialect.PostgresDialect.INSTANCE);
+        SqlStatement statement = SqlStatement.select(query, true, com.rabbitc.ipage.dialect.PostgresDialect.INSTANCE);
+        // PostgreSQL 会把裸 user 解析成 CURRENT_USER，写成 user."user_id" 直接语法错误
+        assertTrue(statement.sql().contains("FROM \"user\" t_user"), statement.sql());
+        assertTrue(statement.sql().contains("t_user.\"user_id\""), statement.sql());
+    }
+
+    @Test
+    @DisplayName("带聚合时 GROUP BY 覆盖所有非聚合选择列")
+    void groupsAllNonAggregateColumns() {
+        String sql = SqlStatement.select(Query.of(AggregateSclass.class), true).sql();
+        String groupBy = sql.substring(sql.indexOf("GROUP BY ") + "GROUP BY ".length());
+        if (groupBy.contains(" HAVING")) {
+            groupBy = groupBy.substring(0, groupBy.indexOf(" HAVING"));
+        }
+        // 关联表 t_student 的列也被 SELECT 出来，必须同样出现在 GROUP BY 里，
+        // 否则 PostgreSQL 报「字段必须出现在 GROUP BY 子句里」
+        assertTrue(groupBy.contains("t_school_class.class_id"), sql);
+        assertTrue(groupBy.contains("t_student.student_name"), sql);
+        assertTrue(groupBy.contains("t_student.class_id"), sql);
     }
 }

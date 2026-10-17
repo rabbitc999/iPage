@@ -55,7 +55,7 @@ JAVA_HOME="C:\Program Files\Java\jdk-22" ./mvnw package -DskipTests
 - 工具方法优先 `private static`，不要把内部细节暴露成公开 API。
 - 判断字段「代表哪一列」一律查 `FieldDescriptor` / `ModelMeta`，不要在字符串上猜。
 
-## 三个必须遵守的设计约束
+## 五个必须遵守的设计约束
 
 ### 1. 标识符统一走方言
 
@@ -86,6 +86,27 @@ dialect.quote(meta.table())          // 对
 表现为「建表建了 `api_step`，插入却插到 `step`」。不要走回头路。
 
 手写 SQL 的调用方要用 `session.tableName(Class)` 取实际表名。
+
+### 4. 别名不能等于表名，也不能撞 SQL 保留字
+
+别名统一加 `t_` 前缀（`Query.Aliases.PREFIX`）。不能省。
+
+真机踩到的：表名 `user` 时别名也是 `user`，PostgreSQL 会把 `user."user_id"` 里的
+`user` 当作 `CURRENT_USER`，报「语法错误 在 "." 或附近」。又因为 `user` 同时是
+内置视图名，不加引号的 `SELECT ... FROM user` 会**静默查错表**。
+加前缀比维护各方言关键字表省事，也不会漏。
+
+### 5. 有聚合时，GROUP BY 必须覆盖所有非聚合选择列
+
+`Query.selectAggregates()` 里先加主表主键，再把 `selectedFields` 中所有
+`kind() != AGGREGATE` 的 `columnExpression()` 加进去。
+
+只按主键分组是错的：`joinAssociations()` 会把关联表（如 `t_sclass`）的**所有列**
+也放进 SELECT，PostgreSQL 严格要求它们出现在 GROUP BY 里，否则报
+「字段必须出现在 GROUP BY 子句里或在聚合函数中使用」。
+
+主键在前可保证分组顺序稳定；主键相同的行在各关联表上取值唯一，不会多出行。
+
 
 ## 已删除、不要恢复的东西
 
