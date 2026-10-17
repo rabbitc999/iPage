@@ -78,6 +78,7 @@ struct Student
     int age = 0;
     int sclassId = 0;
     bool active = true;
+    Sclass sclass; ///< 关联对象（查询时 JOIN 装配，不落库）。
 };
 
 IPAGE_MODEL(Sclass,
@@ -89,7 +90,8 @@ IPAGE_MODEL(Student,
             ipage::text("name", &Student::name),
             ipage::number("age", &Student::age),
             ipage::foreignKey("sclassId", &Student::sclassId, "sclass_id"),
-            ipage::flag("active", &Student::active));
+            ipage::flag("active", &Student::active),
+            ipage::association("sclass", &Student::sclass, ipage::metaOf<Sclass>(), "sclass_id"));
 
 int main()
 {
@@ -183,6 +185,23 @@ int main()
                "存在 17 岁的学生");
         expect(!students.exists(students.query().where(ipage::field("age") == 99)),
                "不存在 99 岁的学生");
+    }
+
+    std::cout << "== 关联装配 ==\n";
+    {
+        ipage::Query q = students.query();
+        q.with("sclass");
+        std::cout << "  SQL: " << q.build().sql() << "\n";
+        auto joined = students.selectList(q);
+        expectEq(joined.size(), std::size_t{3}, "带关联查询得到 3 条");
+        if (!joined.empty())
+        {
+            expectEq(joined.front().sclass.name, std::string("一班"), "嵌套班级名被装配");
+            expect(joined.front().sclass.id > 0, "嵌套班级主键被装配");
+        }
+        // 没有 with 的查询，关联成员保持默认值（id = 0、空名）。
+        auto plain = students.selectAll();
+        expectEq(plain.front().sclass.id, 0, "不带 with 时关联成员不动");
     }
 
     std::cout << "== 分页 ==\n";

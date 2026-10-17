@@ -571,6 +571,15 @@ struct FieldInfo
     std::function<bool(void *, const Cell &)> write;
 
     /**
+     * @brief 取实例上该成员的地址（关联装配用）。
+     *
+     * 只在成员类型本身是「已绑定模型」时才有值；标量字段为空。
+     * 有了它，装配时可以直接把关联表的各列写进成员：
+     * `relatedField.write(info.memberAddress(instance), cell)`。
+     */
+    std::function<void *(void *)> memberAddress;
+
+    /**
      * @brief 是否落库。
      * @return 是真实列返回 true。
      */
@@ -697,39 +706,7 @@ private:
     std::optional<std::size_t> idIndex_; ///< 主键序号。
 };
 
-namespace detail
-{
 
-/**
- * @brief 把编译期的字段声明转成运行期的字段描述。
- * @param one 字段声明。
- * @return 字段描述。
- */
-template <class T, class M>
-FieldInfo erase(const Field<T, M> &one)
-{
-    FieldInfo info;
-    // 显式转成 std::string：字符串字面量在 constexpr 上下文里只能拿到 string_view
-    info.name = std::string(one.name);
-    info.column = std::string(one.columnOrName());
-    info.text = std::string(one.textOrName());
-    info.type = one.type;
-    info.fixed = one.fixed;
-    info.visible = one.visible;
-    info.order = one.order;
-    info.useRelatedForeignKey = one.useRelatedForeignKey;
-    info.function = one.function;
-    info.related = one.related;
-    info.read = [member = one.member](const void *instance) {
-        return ipage::toCell(static_cast<const T *>(instance)->*member);
-    };
-    info.write = [member = one.member](void *instance, const Cell &cell) {
-        return ipage::fromCell(cell, static_cast<T *>(instance)->*member);
-    };
-    return info;
-}
-
-} // namespace detail
 
 /**
  * @brief 模型的绑定表（由 `IPAGE_MODEL` 特化）。
@@ -758,6 +735,54 @@ template <class T>
 struct hasBinding<T, std::void_t<decltype(Binding<T>::fields())>> : std::true_type
 {
 };
+
+namespace detail
+{
+
+/**
+ * @brief 把编译期的字段声明转成运行期的字段描述。
+ * @param one 字段声明。
+ * @return 字段描述。
+ */
+template <class T, class M>
+FieldInfo erase(const Field<T, M> &one)
+{
+    FieldInfo info;
+    // 显式转成 std::string：字符串字面量在 constexpr 上下文里只能拿到 string_view
+    info.name = std::string(one.name);
+    info.column = std::string(one.columnOrName());
+    info.text = std::string(one.textOrName());
+    info.type = one.type;
+    info.fixed = one.fixed;
+    info.visible = one.visible;
+    info.order = one.order;
+    info.useRelatedForeignKey = one.useRelatedForeignKey;
+    info.function = one.function;
+    info.related = one.related;
+
+    if constexpr (hasBinding<M>::value)
+    {
+        // 成员本身是一个已绑定模型：关联字段。标量读写不适用，留空；
+        // 提供整体写入，供 Session 的 JOIN 装配使用。
+        info.read = nullptr;
+        info.write = nullptr;
+        info.memberAddress = [member = one.member](void *instance) -> void * {
+            return &(static_cast<T *>(instance)->*member);
+        };
+    }
+    else
+    {
+        info.read = [member = one.member](const void *instance) {
+            return ipage::toCell(static_cast<const T *>(instance)->*member);
+        };
+        info.write = [member = one.member](void *instance, const Cell &cell) {
+            return ipage::fromCell(cell, static_cast<T *>(instance)->*member);
+        };
+    }
+    return info;
+}
+
+} // namespace detail
 
 namespace detail
 {

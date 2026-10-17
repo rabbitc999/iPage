@@ -40,6 +40,7 @@ struct Student
     std::string name;    ///< 姓名。
     int age = 0;         ///< 年龄。
     int sclassId = 0;    ///< 班级外键。
+    Sclass sclass;       ///< 关联对象（查询时 JOIN 装配，不落库）。
 };
 
 // ---------------------------------------------------------------------------
@@ -54,7 +55,8 @@ IPAGE_MODEL(Student,
             ipage::id("id", &Student::id),
             ipage::text("name", &Student::name),
             ipage::number("age", &Student::age),
-            ipage::foreignKey("sclassId", &Student::sclassId, "sclass_id"));
+            ipage::foreignKey("sclassId", &Student::sclassId, "sclass_id"),
+            ipage::association("sclass", &Student::sclass, ipage::metaOf<Sclass>(), "sclass_id"));
 
 // ---------------------------------------------------------------------------
 //  3. 用起来
@@ -97,6 +99,15 @@ int main()
     for (const Student &student : students.selectList(adults))
     {
         std::cout << "  " << student.name << "，" << student.age << " 岁\n";
+    }
+
+    // 关联装配：with 会自动 LEFT JOIN，并把关联表各列灌进嵌套成员。
+    std::cout << "\n带班级信息的前两名：\n";
+    ipage::Query withClass = students.query();
+    withClass.with("sclass").orderBy("age").limit(2);
+    for (const Student &student : students.selectList(withClass))
+    {
+        std::cout << "  " << student.name << " @ " << student.sclass.name << "\n";
     }
 
     // 分页：页号从 1 开始，返回总条数与总页数。

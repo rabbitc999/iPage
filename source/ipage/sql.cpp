@@ -373,6 +373,7 @@ Query::Query(const Query &other)
       selections_(other.selections_),
       requestedColumns_(other.requestedColumns_),
       joins_(other.joins_),
+      explicitSelection_(other.explicitSelection_),
       counting_(other.counting_),
       limit_(other.limit_),
       offset_(other.offset_)
@@ -392,6 +393,7 @@ Query &Query::operator=(const Query &other)
     selections_ = other.selections_;
     requestedColumns_ = other.requestedColumns_;
     joins_ = other.joins_;
+    explicitSelection_ = other.explicitSelection_;
     counting_ = other.counting_;
     limit_ = other.limit_;
     offset_ = other.offset_;
@@ -444,11 +446,13 @@ Query &Query::offset(long long value)
 Query &Query::select(std::vector<std::string> columns)
 {
     requestedColumns_ = std::move(columns);
+    explicitSelection_ = true;
     return *this;
 }
 
 Query &Query::aggregate(std::string aliasName, std::string column, SqlFunction function)
 {
+    explicitSelection_ = true;
     SelectedField selected;
     selected.aliasName = std::move(aliasName);
     selected.function = function;
@@ -465,6 +469,7 @@ Query &Query::aggregate(std::string aliasName, std::string column, SqlFunction f
 Query &Query::countOnly()
 {
     counting_ = true;
+    explicitSelection_ = true;
     selections_.clear();
     requestedColumns_.clear();
     orders_.clear();
@@ -489,9 +494,47 @@ Query &Query::join(const ModelMeta &related, std::string foreignKey, std::string
     return *this;
 }
 
+Query &Query::with(const std::string &fieldName)
+{
+    const FieldInfo *info = meta_->field(fieldName);
+    if (info == nullptr)
+    {
+        throw std::invalid_argument("模型 " + meta_->name() + " 没有字段 " + fieldName);
+    }
+    if (info->type != FieldType::AssociationModel || info->related == nullptr)
+    {
+        throw std::invalid_argument("字段 " + fieldName + " 不是关联字段（用 ipage::association 声明）");
+    }
+
+    // JOIN 条件：主表上的外键列（声明 association 时给的 column）→ 关联表主键。
+    const std::string &foreignKey = resolveColumn(*meta_, info->column);
+    const std::string alias = "t_" + std::to_string(joins_.size() + 2);
+    JoinSpec spec;
+    spec.meta = info->related;
+    spec.alias = alias;
+    spec.foreignKey = foreignKey;
+    spec.relatedForeignKey = info->related->idColumn();
+    joins_.push_back(std::move(spec));
+
+    // 选中关联表的全部列，别名 `字段名.列名`。
+    for (const FieldInfo &relatedField : info->related->fields())
+    {
+        if (!relatedField.isColumn()) continue;
+        SelectedField selected;
+        selected.aliasName = fieldName + "." + relatedField.column;
+        selected.column = relatedField.column;
+        selected.tableAlias = alias;
+        selected.isJoin = true;
+        selections_.push_back(std::move(selected));
+    }
+    return *this;
+}
+
 void Query::ensureDefaultSelections()
 {
-    if (!selections_.empty()) return;
+    // 显式给过选列（select / aggregate / countOnly）就不再补默认；
+    // with() 只加关联列，主表列仍走默认。
+    if (explicitSelection_) return;
 
     std::vector<std::string> wanted = requestedColumns_;
     if (wanted.empty())
@@ -515,17 +558,7 @@ void Query::ensureDefaultSelections()
 
 SqlStatement Query::build() const
 {
-    Query copy(*meta_, *dialect_);
-    copy.requestedColumns_ = requestedColumns_;
-    copy.selections_ = selections_;
-    copy.orders_ = orders_;
-    copy.counting_ = counting_;
-    copy.limit_ = limit_;
-    copy.offset_ = offset_;
-    if (condition_ != nullptr)
-    {
-        copy.condition_ = std::make_unique<Condition>(*condition_);
-    }
+    Query copy(*this); // 拷贝构造已覆盖全部成员（含条件树深拷贝）
     copy.ensureDefaultSelections();
 
     const Dialect &dialect = *dialect_;

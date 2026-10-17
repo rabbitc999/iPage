@@ -84,6 +84,7 @@ ctest --test-dir build --output-on-failure
 | `FieldType` 枚举 | `ipage::FieldType` | 九个值一一对应 |
 | `OperatorType` | `ipage::OperatorType` | 十三个操作符，封闭枚举 |
 | `Session` / `ModelSession` | `ipage::Session<Model>` | API 名字保持接近 |
+| 关联装配（`joinAssociations`） | `Query::with(字段名)` | 自动 LEFT JOIN + 嵌套成员回填 |
 | `SqlCondition` | `ipage::Condition` / `FieldRef` | 支持 `&&` `\|\|` 运算符 |
 | `Query` | `ipage::Query` | 链式配置，`build()` 出版本 |
 | `SqlStatement` | `ipage::SqlStatement` | SQL + 参数一起产出 |
@@ -99,7 +100,10 @@ Java 里写 `@ModelField(byModel = Sclass.class)`；C++ 在声明期拿不到另
 
 ```cpp
 IPAGE_MODEL(Student,
-    ipage::association("sclass", &Student::sclass, Sclass::meta()));
+    ipage::association("sclass", &Student::sclass, Sclass::meta(), "sclass_id"));
+
+// 查询时一行装配：自动 LEFT JOIN，把关联表各列灌进 student.sclass
+students.query().with("sclass");
 ```
 
 **2. 列的 C++ 类型由成员指针推导。**
@@ -142,7 +146,7 @@ Java 版只能 `and_(gt(...), like(...))` 这样套。
 
 ## 测试
 
-`tests/test_ipage.cpp` 覆盖建表、插入回填、查询、模糊匹配、分页、更新、事务提交/回滚、批量与条件删除、列白名单、SQL 报错。37 项断言，全部通过。
+`tests/test_ipage.cpp` 覆盖建表、插入回填、查询、模糊匹配、关联装配、分页、更新、事务提交/回滚、批量与条件删除、列白名单、SQL 报错。43 项断言，全部通过。
 
 ```sh
 make test

@@ -481,28 +481,72 @@ private:
         const std::unique_ptr<Cursor> cursor = prepared->query();
 
         std::vector<Model> items;
+        std::vector<std::string> names; // 列名整行不变，第一行取一次
         while (cursor->next())
         {
+            if (names.empty())
+            {
+                names.reserve(cursor->columnCount());
+                for (std::size_t index = 0; index < cursor->columnCount(); ++index)
+                {
+                    names.push_back(cursor->columnName(index));
+                }
+            }
             Model model{};
-            assemble(model, *cursor);
+            assemble(model, *cursor, names);
             items.push_back(std::move(model));
         }
         return items;
     }
 
     /**
-     * @brief 把当前行灌进实例。
+     * @brief 把当前行灌进实例：先平铺列，再装配关联对象。
+     *
+     * 平铺列按列名查 `ModelMeta`；关联列的别名形如 `sclass.id`（见
+     * `Query::with`），按前缀收集后写到关联成员的地址上。
+     *
      * @param model 实例。
      * @param cursor 游标。
+     * @param names 结果集的列名（与列序号同序）。
      */
-    void assemble(Model &model, const Cursor &cursor) const
+    void assemble(Model &model, const Cursor &cursor, const std::vector<std::string> &names) const
     {
-        const std::size_t count = cursor.columnCount();
-        for (std::size_t index = 0; index < count; ++index)
+        for (std::size_t index = 0; index < names.size(); ++index)
         {
-            const FieldInfo *info = meta_->field(cursor.columnName(index));
+            const FieldInfo *info = meta_->field(names[index]);
             if (info == nullptr || info->write == nullptr) continue;
             info->write(&model, cursor.value(index));
+        }
+
+        for (const FieldInfo &info : meta_->fields())
+        {
+            if (info.type != FieldType::AssociationModel || info.related == nullptr ||
+                info.memberAddress == nullptr)
+            {
+                continue;
+            }
+
+            const std::string prefix = info.name + ".";
+            void *member = info.memberAddress(&model);
+
+            for (const FieldInfo &relatedField : info.related->fields())
+            {
+                if (!relatedField.isColumn() || relatedField.write == nullptr) continue;
+
+                // 只装配结果集里真的出现的关联列（没 with 的关联自然跳过）。
+                bool found = false;
+                for (const std::string &name : names)
+                {
+                    if (name == prefix + relatedField.column)
+                    {
+                        found = true;
+                        break;
+                    }
+                }
+                if (!found) continue;
+
+                relatedField.write(member, cursor.value(prefix + relatedField.column));
+            }
         }
     }
 

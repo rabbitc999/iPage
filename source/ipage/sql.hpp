@@ -209,8 +209,7 @@ struct SelectedField
     std::string tableAlias;   ///< 主表别名或关联表别名。
     std::optional<SqlFunction> function; ///< 聚合函数。
     bool isAggregate = false; ///< 是否聚合（决定 GROUP BY 是否包含它）。
-    bool isJoin = false;      ///< 是否来自 LEFT JOIN 的关联表。
-    const ModelMeta *related = nullptr;  ///< 关联字段指向的模型（非空则要 LEFT JOIN）。
+    bool isJoin = false;      ///< 是否来自 LEFT JOIN 的关联表。    const ModelMeta *related = nullptr;  ///< 关联字段指向的模型（非空则要 LEFT JOIN）。
     std::string relatedAlias; ///< 关联表别名。
     std::string relatedForeignKey; ///< 关联表上指回主表的列。
     std::string foreignKey;   ///< 主表上指向关联表的列。
@@ -322,6 +321,19 @@ public:
      */
     Query &join(const ModelMeta &related, std::string foreignKey, std::string relatedForeignKey);
 
+    /**
+     * @brief 按关联字段名装配：自动 LEFT JOIN 并选中关联表的全部列。
+     *
+     * 列别名形如 `sclass.id`，`Session` 装配时按同一前缀回填进嵌套成员。
+     * 字段必须以 `ipage::association(...)` 声明（类型 `AssociationModel`、
+     * 带 `related` 元数据），否则抛 `std::invalid_argument`。
+     *
+     * @param fieldName 关联字段名。
+     * @return 自身引用。
+     * @throws std::invalid_argument 字段不存在或不是关联字段。
+     */
+    Query &with(const std::string &fieldName);
+
     /** 当前条件。 */
     [[nodiscard]] const Condition *condition() const noexcept { return condition_.get(); }
     /** 当前排序。 */
@@ -360,6 +372,7 @@ private:
     std::vector<SelectedField> selections_;
     std::vector<std::string> requestedColumns_;
     std::vector<JoinSpec> joins_;
+    bool explicitSelection_ = false; ///< select/aggregate 显式给过选列。
     bool counting_ = false;
     long long limit_ = 0;
     long long offset_ = 0;
