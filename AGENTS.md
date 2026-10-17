@@ -34,6 +34,19 @@ JAVA_HOME="C:\Program Files\Java\jdk-22" ./mvnw package -DskipTests
 - 没有全局 `mvn` 时用仓库里的 wrapper（`.mvn/` + `mvnw`）。
 - 缺少插件时去掉 `-o`（离线模式会找不到 `maven-resources-plugin`）。
 
+### C++ 版（`source/`）
+
+```bash
+cd source
+mingw32-make            # Windows；Linux/macOS 用 make。构建 + 跑测试
+cmake -S . -B build -G "MinGW Makefiles" -DCMAKE_BUILD_TYPE=Release
+cmake --build build && ctest --test-dir build --output-on-failure
+```
+
+- C++17（`-std=c++17 -Wall -Wextra`），只用标准库 + 内嵌的 `sqlite/sqlite3.c`。
+- `sqlite3.c` 有 9 MB，编译要 20 秒左右，改动它不现实——它是官方 amalgamation，原样保留。
+- 两个构建入口（`Makefile` / `CMakeLists.txt`）**都要保持可用**，改结构时两边一起改。
+
 ## 测试约定
 
 - `SqlStatementTest`：纯字符串断言，不连库，跑得最快。
@@ -107,6 +120,28 @@ dialect.quote(meta.table())          // 对
 
 主键在前可保证分组顺序稳定；主键相同的行在各关联表上取值唯一，不会多出行。
 
+---
+
+## C++ 版的对应约束
+
+`source/` 是上面这套设计的 C++17 移植，五条约束在它身上同样成立，对应位置如下：
+
+| 约束 | C++ 里的落点 |
+| --- | --- |
+| 标识符走方言 | `Query::build()` 里所有表名/列名都经 `Dialect::quote` / `qualify`，没有裸拼接 |
+| 参数只走占位符 | `Cell` 是唯一值载体，`Condition::render` 边拼边 `params.push_back` |
+| 表名只有一个来源 | `Session` 全部从 `metaOf<T>().table()` 取；`SchemaSync` 同样 |
+| 别名加 `t_` 前缀 | `Query::kMainAlias = "t_"`，关联表 `t_2`、`t_3`…… |
+| GROUP BY 覆盖非聚合列 | `Query::build()` 遍历 `selections_`，凡 `!function.has_value()` 的一律进 GROUP BY |
+
+额外的 C++ 侧约定：
+
+- **列白名单**：`Query::filter` / `orderBy` / `select` 的列名必须能在 `ModelMeta` 里查到，
+  查不到抛 `std::invalid_argument`。不要为了「支持表别名前缀」而放开这个检查。
+- **两层结构不能塌**：`Field<T,M>`（声明期，带成员指针）只存在于 `IPAGE_MODEL` 展开处；
+  `FieldInfo`（运行期，类型擦除）才是内核看到的。把 `Query`/`Session` 模板化会显著增加编译时间。
+- **注释里不要出现 `/*`**（写成 `jdbc 包` 而不是 `jdbc/*`），GCC 会报 `-Wcomment`。
+- 公开头文件一律 `#ifndef IPAGE_XXX_HPP` 保护，`sqlite3.h` 只允许出现在 `connection.cpp`。
 
 ## 已删除、不要恢复的东西
 

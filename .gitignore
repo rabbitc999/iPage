@@ -5,3 +5,12 @@ target/
 .DS_Store
 /build/
 /tmp/
+
+# C++ 版
+source/build/
+*.o
+*.obj
+*.a
+*.lib
+*.db
+*.db-journal

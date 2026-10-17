@@ -220,6 +220,39 @@ new ModelSession(provider, "", dialect, false);
 - **真机验证**：方言相关的逻辑用真实 PostgreSQL 跑集成测试，
   连不上数据库时整类跳过，不会把 CI 打红。
 
+## C++ 版
+
+同一套思路有一个 C++17 移植，放在 [`source/`](source/)：零外部依赖（标准库 + 内嵌 SQLite），
+用成员指针表代替注解反射。
+
+```cpp
+struct Student
+{
+    int         id = 0;
+    std::string name;
+    int         age = 0;
+};
+
+IPAGE_MODEL(Student,
+    ipage::id("id", &Student::id),
+    ipage::text("name", &Student::name),
+    ipage::number("age", &Student::age));
+
+ipage::Session<Student> students(*connection);
+Student student;
+student.name = "张三";
+students.insert(student);                       // student.id 自动回填
+
+auto adults = students.selectList(
+    students.query().where(ipage::field("age") >= 18));
+```
+
+```bash
+cd source && make          # 构建并跑测试（Windows 上用 mingw32-make）
+```
+
+细节见 [`source/README.md`](source/README.md)。
+
 ## 构建
 
 ```bash
@@ -242,6 +275,12 @@ src/main/java/com/rabbitc/ipage/
 ├── meta/          ModelPermission
 ├── reflect/       FieldDescriptor、ModelMeta、ModelValidator、TemplateRenderer、ValueConverter
 └── sql/           Query、SqlStatement、SqlCondition、SelectedField、JoinCondition
+
+source/                    C++17 版
+├── ipage/         field / model / dialect / sql / connection / session / schema
+├── sqlite/        SQLite amalgamation
+├── examples/      用法示例
+└── tests/         端到端测试
 ```
 
 ## 许可
